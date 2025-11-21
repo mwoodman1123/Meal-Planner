@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="manifest" href="manifest.json">
+<script src="sync.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Meal Planner + Shopping List — Calendar Only</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#9aa7b2; --accent:#6ee7b7; --accent-2:#60a5fa;
+    --glass: rgba(255,255,255,0.04);
+    --radius:12px;
+    --shadow: 0 6px 18px rgba(3,8,23,0.6);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+  }
+  html,body{height:100%; margin:0; background:var(--bg); color:#e6eef6;}
+  .app{ max-width:1200px; margin:28px auto; padding:20px; box-sizing:border-box; }
+  header { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:18px; }
+  .brand { display:flex; gap:12px; align-items:center; }
+  .logo { width:56px; height:56px; border-radius:10px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); display:flex; align-items:center; justify-content:center; font-weight:700; color:#042; box-shadow:var(--shadow); }
+  h1{margin:0; font-size:18px}
+  p.subtitle{margin:0;color:var(--muted);font-size:13px}
+
+  .controls{display:flex;gap:10px;align-items:center}
+  button, select, input, textarea{font:14px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, Arial; border-radius:8px;}
+  select, input, textarea { padding:8px 10px; background: rgba(255,255,255,0.02); color:inherit; border:1px solid rgba(255,255,255,0.03); }
+  button.primary { background: linear-gradient(90deg,var(--accent),var(--accent-2)); color:#042; padding:8px 12px; border:none; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--muted); padding:8px 10px; border:1px solid rgba(255,255,255,0.04); cursor:pointer; }
+
+  .grid { display:grid; grid-template-columns: 1fr 360px; gap:18px; }
+  .left { display:grid; gap:14px; }
+
+  .card { background:var(--card); padding:14px; border-radius:var(--radius); box-shadow:var(--shadow); }
+  .card h3{margin:0 0 8px 0}
+  .category-row{display:flex;gap:8px;align-items:center}
+  .category-row select{flex:1}
+
+  .calendar-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; margin-top:8px; }
+  .day { padding:10px; border-radius:8px; background:var(--glass); min-height:180px; display:flex; flex-direction:column; gap:6px; }
+  .day .day-label{font-size:12px;color:var(--muted);font-weight:700}
+
+  .calendar-row { display:flex; gap:6px; flex-direction:column; }
+  .calendar-row label { font-size:11px; color:var(--muted); }
+
+  .shopping-list{display:flex;flex-direction:column;gap:8px; max-height:420px; overflow:auto; margin-top:8px;}
+  .shopping-item{display:flex;gap:8px;align-items:center;padding:8px;border-radius:8px;background:linear-gradient(180deg, rgba(0,0,0,0.02), rgba(255,255,255,0.01));}
+  .shopping-item .name{flex:1}
+  .shopping-controls{display:flex;gap:8px;margin-top:10px}
+
+  /* modal */
+  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(2,6,23,0.6);z-index:60}
+  .modal.open{display:flex}
+  .dialog{width:100%;max-width:520px;background:var(--card);padding:18px;border-radius:12px;}
+
+  @media (max-width:980px){
+    .grid{grid-template-columns:1fr}
+    .calendar-grid{grid-template-columns: repeat(2, 1fr)}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="logo">MP</div>
+      <div>
+        <h1>Meal Planner & Shopping List</h1>
+        <p class="subtitle">Meals & calendar persist — shopping list resets on refresh</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="openAddMeal" class="primary">+ Add Meal</button>
+      <button id="exportMeals" class="ghost">Export Meals</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="left">
+
+      <!-- Quick Add to Shopping List -->
+      <div class="card">
+        <h3>Quick Add to Shopping List</h3>
+        <div class="category-row" style="margin-bottom:8px">
+          <label style="min-width:120px;color:var(--muted)">Apps & Snacks</label>
+          <select id="select_apps"></select>
+          <button id="btn_add_apps" class="primary">Add</button>
+        </div>
+
+        <div class="category-row" style="margin-bottom:8px">
+          <label style="min-width:120px;color:var(--muted)">Main Course</label>
+          <select id="select_mains"></select>
+          <button id="btn_add_mains" class="primary">Add</button>
+        </div>
+
+        <div class="category-row" style="margin-bottom:8px">
+          <label style="min-width:120px;color:var(--muted)">Sides</label>
+          <select id="select_sides"></select>
+          <button id="btn_add_sides" class="primary">Add</button>
+        </div>
+
+        <div class="category-row" style="margin-bottom:8px">
+          <label style="min-width:120px;color:var(--muted)">On The Grill</label>
+          <select id="select_grill"></select>
+          <button id="btn_add_grill" class="primary">Add</button>
+        </div>
+
+        <div class="category-row" style="margin-bottom:8px">
+          <label style="min-width:120px;color:var(--muted)">Crockpot</label>
+          <select id="select_crockpot"></select>
+          <button id="btn_add_crockpot" class="primary">Add</button>
+        </div>
+
+        <div class="category-row">
+          <label style="min-width:120px;color:var(--muted)">Desserts</label>
+          <select id="select_desserts"></select>
+          <button id="btn_add_dessert" class="primary">Add</button>
+        </div>
+      </div>
+
+      <!-- Weekly Calendar (all categories per day) -->
+      <div class="card">
+        <h3>Weekly Calendar (All categories per day)</h3>
+        <div class="calendar-grid" id="calendar"></div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h3>Shopping List</h3>
+        <div class="shopping-list" id="shoppingList"></div>
+
+        <div class="shopping-controls">
+          <input id="manualAddInput" placeholder="Add item (e.g. Garlic, 3 cloves)" style="flex:1;padding:8px" />
+          <button id="manualAddBtn" class="primary">Add</button>
+          <button id="exportListBtn" class="ghost">Export</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Add / Manage Meal Modal -->
+<div id="modal" class="modal" aria-hidden="true" role="dialog">
+  <div class="dialog" role="document">
+    <h3 id="modalTitle">Add Meal</h3>
+
+    <!-- Top: Add / Edit form -->
+    <div style="margin-top:10px;">
+      <label style="display:block;color:var(--muted);margin-bottom:6px">Category</label>
+      <select id="modalCategory" style="width:100%"></select>
+    </div>
+    <div style="margin-top:10px;">
+      <label style="display:block;color:var(--muted);margin-bottom:6px">Meal name</label>
+      <input id="modalName" placeholder="e.g., Ribeye" style="width:100%" />
+    </div>
+    <div style="margin-top:10px;">
+      <label style="display:block;color:var(--muted);margin-bottom:6px">Ingredients (comma separated)</label>
+      <textarea id="modalIngredients" rows="3" style="width:100%"></textarea>
+    </div>
+
+    <!-- Divider + Existing meals list -->
+    <div id="modalMealsWrapper" style="margin-top:14px;border-top:1px solid rgba(148,163,184,0.35);padding-top:10px;max-height:220px;overflow:auto;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:6px;">Existing meals in this category</div>
+      <div id="modalMealsList" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button id="modalCancel" class="ghost">Cancel</button>
+      <button id="modalSave" class="primary">Save Meal</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ====== Config & Keys ======
+  const MEALS_KEY = 'mp_meals_v1';
+  const CAL_KEY = 'mp_calendar_v1';
+  const categories = [
+    { key:'apps', label:'Apps & Snacks' },
+    { key:'mains', label:'Main Course' },
+    { key:'sides', label:'Sides' },
+    { key:'grill', label:'On The Grill' },
+    { key:'crockpot', label:'Crockpot' },
+    { key:'desserts', label:'Desserts' }
+  ];
+  const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  // ====== State ======
+  let meals = {};
+  let calendar = {};
+  let shoppingList = [];
+  let editingMeal = null; // { cat, id } or null
+
+  // ====== DOM ======
+  function $(s,root=document){ return root.querySelector(s); }
+  const selects = {
+    apps: $('#select_apps'),
+    mains: $('#select_mains'),
+    sides: $('#select_sides'),
+    grill: $('#select_grill'),
+    crockpot: $('#select_crockpot'),
+    desserts: $('#select_desserts'),
+  };
+  const calendarContainer = $('#calendar');
+  const shoppingListEl = $('#shoppingList');
+
+  // Modal refs
+  const modal = $('#modal');
+  const modalTitle = $('#modalTitle');
+  const modalCategory = $('#modalCategory');
+  const modalName = $('#modalName');
+  const modalIngredients = $('#modalIngredients');
+  const modalMealsList = $('#modalMealsList');
+  const modalCancel = $('#modalCancel');
+  const modalSave = $('#modalSave');
+
+  // ====== Persistence ======
+  function loadMeals(){
+    const raw = localStorage.getItem(MEALS_KEY);
+    if(raw){ try{ meals = JSON.parse(raw); return;}catch{} }
+    seedMeals();
+  }
+  function saveMeals(){
+    localStorage.setItem(MEALS_KEY, JSON.stringify(meals));
+    renderAll();
+  }
+
+  function loadCalendar(){
+    const raw = localStorage.getItem(CAL_KEY);
+    if(raw){ try{ calendar = JSON.parse(raw); return;}catch{} }
+    calendar = {};
+    DAYS.forEach(d => calendar[d] = {
+      apps:null, mains:null, sides:null, grill:null, crockpot:null, desserts:null
+    });
+    saveCalendar();
+  }
+  function saveCalendar(){
+    localStorage.setItem(CAL_KEY, JSON.stringify(calendar));
+    renderCalendar();
+  }
+
+  // ====== Seed defaults ======
+  function seedMeals(){
+    meals = {
+      apps: { brus:{id:'brus',name:'Bruschetta',ingredients:['Bread','Tomato','Basil','Olive Oil']} },
+      mains: {
+        steak:{id:'steak',name:'Steak',ingredients:['Garlic','Avocado Oil','Salt','Pepper','Steak Seasoning','Butter']},
+        strip:{id:'strip',name:'NY Strip',ingredients:['Garlic','Salt','Pepper','Butter']}
+      },
+      sides:{
+        mash:{id:'mash',name:'Mashed Potatoes',ingredients:['Potatoes','Butter','Salt','Cream']},
+        salad:{id:'salad',name:'Salad',ingredients:['Lettuce','Tomato','Cucumber','Olive Oil']}
+      },
+      grill:{ ribs:{id:'ribs',name:'BBQ Ribs',ingredients:['Pork Ribs','BBQ Sauce','Salt','Pepper']} },
+      crockpot:{ chili:{id:'chili',name:'Beef Chili',ingredients:['Beef','Beans','Tomato Sauce','Chili Powder']} },
+      desserts:{ cake:{id:'cake',name:'Chocolate Cake',ingredients:['Flour','Cocoa','Sugar','Eggs','Butter']} }
+    };
+    saveMeals();
+  }
+
+  // ====== Render: dropdowns ======
+  function populateSelect(sel,cat){
+    sel.innerHTML = '<option value="">-- choose a meal --</option>';
+    const c = meals[cat] || {};
+    Object.values(c).forEach(m=>{
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.name;
+      sel.appendChild(o);
+    });
+  }
+
+  // ====== Render: calendar ======
+  function renderCalendar(){
+    calendarContainer.innerHTML='';
+    DAYS.forEach(day=>{
+      const d = document.createElement('div');
+      d.className='day';
+
+      const lab = document.createElement('div');
+      lab.className='day-label'; lab.textContent=day;
+      d.append(lab);
+
+      categories.forEach(c=>{
+        const row = document.createElement('div');
+        row.className='calendar-row';
+
+        const l = document.createElement('label');
+        l.textContent=c.label;
+        row.append(l);
+
+        const sel = document.createElement('select');
+        sel.innerHTML = `<option value="">-- ${c.label} --</option>`;
+        Object.values(meals[c.key]||{}).forEach(m=>{
+          const o = document.createElement('option');
+          o.value=m.id; o.textContent=m.name;
+          sel.append(o);
+        });
+
+        if(calendar[day] && calendar[day][c.key])
+          sel.value = calendar[day][c.key];
+
+        sel.onchange = ()=>{
+          calendar[day][c.key] = sel.value || null;
+          saveCalendar();
+        };
+
+        row.append(sel);
+        d.append(row);
+      });
+
+      calendarContainer.append(d);
+    });
+  }
+
+  // ====== Render: all ======
+  function renderAll(){
+    populateSelect(selects.apps,'apps');
+    populateSelect(selects.mains,'mains');
+    populateSelect(selects.sides,'sides');
+    populateSelect(selects.grill,'grill');
+    populateSelect(selects.crockpot,'crockpot');
+    populateSelect(selects.desserts,'desserts');
+    renderCalendar();
+  }
+
+  // ====== Shopping list ======
+  function addShoppingItems(items){
+    items.forEach(i=>{
+      const ex = shoppingList.find(x=>x.name===i);
+      if(ex) ex.qty++;
+      else shoppingList.push({name:i,qty:1});
+    });
+    renderShoppingList();
+  }
+
+  function renderShoppingList(){
+    shoppingListEl.innerHTML='';
+    shoppingList.forEach((it,i)=>{
+      const d=document.createElement('div'); d.className='shopping-item';
+
+      const name=document.createElement('div');
+      name.className='name'; name.contentEditable=true; name.textContent=it.name;
+      name.onblur=()=> it.name = name.textContent.trim();
+
+      const qty=document.createElement('input');
+      qty.value=it.qty; qty.style.width='50px';
+      qty.onchange=()=> it.qty = Number(qty.value)||1;
+
+      const rm=document.createElement('button');
+      rm.textContent='✕'; rm.className='ghost';
+      rm.onclick=()=>{ shoppingList.splice(i,1); renderShoppingList(); };
+
+      d.append(name,qty,rm);
+      shoppingListEl.append(d);
+    });
+  }
+
+  // ====== Modal helpers (Add / Edit / Delete Meals) ======
+  function resetModalForm(){
+    editingMeal = null;
+    modalTitle.textContent = 'Add Meal';
+    modalCategory.disabled = false;
+    modalName.value = '';
+    modalIngredients.value = '';
+  }
+
+  function renderModalMealsList(){
+    const cat = modalCategory.value;
+    modalMealsList.innerHTML = '';
+    const catMeals = meals[cat] || {};
+    const entries = Object.entries(catMeals);
+
+    if(!entries.length){
+      const empty = document.createElement('div');
+      empty.style.fontSize = '13px';
+      empty.style.color = 'var(--muted)';
+      empty.textContent = 'No meals yet in this category.';
+      modalMealsList.append(empty);
+      return;
+    }
+
+    entries.forEach(([id,m])=>{
+      const row = document.createElement('div');
+      row.style.display='flex';
+      row.style.justifyContent='space-between';
+      row.style.alignItems='center';
+      row.style.gap='8px';
+
+      const name = document.createElement('div');
+      name.textContent = m.name;
+      name.style.fontWeight = '600';
+      name.style.fontSize = '13px';
+
+      const actions = document.createElement('div');
+      actions.style.display='flex';
+      actions.style.gap='6px';
+
+      const editBtn = document.createElement('button');
+      editBtn.textContent='Edit';
+      editBtn.className='ghost';
+      editBtn.style.fontSize='12px';
+      editBtn.onclick = ()=> beginEditMeal(cat,id);
+
+      const delBtn = document.createElement('button');
+      delBtn.textContent='Delete';
+      delBtn.className='ghost';
+      delBtn.style.fontSize='12px';
+      delBtn.onclick = ()=> deleteMeal(cat,id);
+
+      actions.append(editBtn,delBtn);
+      row.append(name,actions);
+      modalMealsList.append(row);
+    });
+  }
+
+  function openAddModal(cat){
+    // Build category options
+    modalCategory.innerHTML='';
+    categories.forEach(c=>{
+      const o=document.createElement('option');
+      o.value=c.key; o.textContent=c.label;
+      modalCategory.append(o);
+    });
+
+    resetModalForm();
+    modalCategory.value = cat || categories[0].key;
+    renderModalMealsList();
+
+    modal.classList.add('open');
+  }
+
+  function closeModal(){
+    modal.classList.remove('open');
+    resetModalForm();
+  }
+
+  function beginEditMeal(cat,id){
+    const meal = meals[cat] && meals[cat][id];
+    if(!meal) return;
+
+    editingMeal = { cat, id };
+    modalTitle.textContent = 'Edit Meal';
+    modalCategory.value = cat;
+    modalCategory.disabled = true; // keep meal in its category while editing
+
+    modalName.value = meal.name;
+    modalIngredients.value = (meal.ingredients || []).join(', ');
+    renderModalMealsList();
+  }
+
+  function deleteMeal(cat,id){
+    const meal = meals[cat] && meals[cat][id];
+    if(!meal) return;
+    if(!confirm('Delete "'+meal.name+'"? This removes it from all dropdowns and the calendar.')) return;
+
+    // Remove from meals
+    delete meals[cat][id];
+
+    // Clear any calendar usage
+    DAYS.forEach(d=>{
+      if(calendar[d] && calendar[d][cat] === id){
+        calendar[d][cat] = null;
+      }
+    });
+
+    // If we were editing this meal, reset form
+    if(editingMeal && editingMeal.cat === cat && editingMeal.id === id){
+      resetModalForm();
+    }
+
+    saveMeals();
+    saveCalendar();
+    renderModalMealsList();
+  }
+
+  // Modal events
+  modalCancel.onclick = closeModal;
+
+  modalCategory.onchange = ()=>{
+    // During edit, keep category locked
+    if(editingMeal){
+      modalCategory.value = editingMeal.cat;
+      return;
+    }
+    renderModalMealsList();
+  };
+
+  modalSave.onclick = ()=>{
+    const cat = modalCategory.value;
+    const name = modalName.value.trim();
+    const ingredientsRaw = modalIngredients.value.trim();
+
+    if(!name){
+      alert("Name required");
+      return;
+    }
+
+    if(!meals[cat]) meals[cat] = {};
+
+    const ingredients = ingredientsRaw
+      ? ingredientsRaw.split(',').map(s=>s.trim()).filter(x=>x)
+      : [];
+
+    if(editingMeal && editingMeal.cat === cat && meals[cat][editingMeal.id]){
+      // Update existing meal
+      meals[cat][editingMeal.id].name = name;
+      meals[cat][editingMeal.id].ingredients = ingredients;
+
+      saveMeals(); // re-renders selects & calendar
+      resetModalForm();
+      modalCategory.value = cat;
+      renderModalMealsList();
+    } else {
+      // Create new meal
+      let id = name.replace(/\s+/g,'_').toLowerCase().replace(/[^\w]/g,'');
+      let base=id, n=1;
+      while(meals[cat][id]){
+        id = base + "_" + n++;
+      }
+
+      meals[cat][id] = { id, name, ingredients };
+      saveMeals();
+      resetModalForm();
+      modalCategory.value = cat;
+      renderModalMealsList();
+    }
+  };
+
+  // ====== Buttons ======
+  $('#openAddMeal').onclick = ()=> openAddModal();
+
+  $('#btn_add_apps').onclick = ()=>{
+    const x=selects.apps.value;
+    if(x && meals.apps && meals.apps[x]) addShoppingItems(meals.apps[x].ingredients);
+  };
+  $('#btn_add_mains').onclick = ()=>{
+    const x=selects.mains.value;
+    if(x && meals.mains && meals.mains[x]) addShoppingItems(meals.mains[x].ingredients);
+  };
+  $('#btn_add_sides').onclick = ()=>{
+    const x=selects.sides.value;
+    if(x && meals.sides && meals.sides[x]) addShoppingItems(meals.sides[x].ingredients);
+  };
+  $('#btn_add_grill').onclick = ()=>{
+    const x=selects.grill.value;
+    if(x && meals.grill && meals.grill[x]) addShoppingItems(meals.grill[x].ingredients);
+  };
+  $('#btn_add_crockpot').onclick = ()=>{
+    const x=selects.crockpot.value;
+    if(x && meals.crockpot && meals.crockpot[x]) addShoppingItems(meals.crockpot[x].ingredients);
+  };
+  $('#btn_add_dessert').onclick = ()=>{
+    const x=selects.desserts.value;
+    if(x && meals.desserts && meals.desserts[x]) addShoppingItems(meals.desserts[x].ingredients);
+  };
+
+  $('#manualAddBtn').onclick = ()=>{
+    const v=$('#manualAddInput').value.trim();
+    if(v){ addShoppingItems([v]); $('#manualAddInput').value=''; }
+  };
+
+  $('#exportListBtn').onclick = ()=>{
+    if(!shoppingList.length){ alert("List empty"); return; }
+    const t = shoppingList.map(i=>`${i.qty} ${i.name}`).join("\n");
+    const blob = new Blob([t],{type:"text/plain"});
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download="shopping-list.txt"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  $('#exportMeals').onclick = ()=>{
+    const txt = JSON.stringify(meals,null,2);
+    const blob = new Blob([txt],{type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download="meals.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ====== Init ======
+  loadMeals();
+  loadCalendar();
+  renderAll();
+  renderShoppingList();
+
+})();
+</script>
+</body>
+</html>
